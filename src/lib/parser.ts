@@ -1,160 +1,380 @@
 import Papa from 'papaparse';
 import mammoth from 'mammoth';
-import { ParsedItem } from '@/types/database';
+import { z } from 'zod';
+import {
+  ParsedChecklistStructure,
+  IgnoredElement,
+  NeedsReviewElement,
+  ClassificationCategory,
+  ParsedItem,
+} from '@/types/database';
 
-// Categories dictionary for intelligent matching
-const CATEGORY_MAP: Record<string, string[]> = {
-  'Navegação': ['menu', 'link', 'botão', 'navega', 'header', 'footer', 'rodapé', 'cabeçalho', 'redireciona', 'hover', 'desktop', 'página'],
-  'Formulários': ['formulário', 'contato', 'envio', 'validar', 'validação', 'campo', 'input', 'mensagem', 'sucesso', 'email', 'e-mail'],
-  'Agendamento': ['agendar', 'agendamento', 'marcar', 'remarcar', 'cancelar', 'consulta', 'horário', 'calendário', 'reserva'],
-  'Responsividade': ['responsiv', 'mobile', 'celular', 'tablet', 'tela', 'layout', 'largura', '360px', 'breakpoint', 'quebra', 'dispositivo'],
-  'Performance': ['carregam', 'lento', 'rápido', 'imagem', 'otimiz', 'erro', 'console', '404', '500', 'desempenho', 'velocidade'],
-  'Integrações': ['whatsapp', 'instagram', 'facebook', 'maps', 'api', 'webhook', 'gateway', 'pagamento', 'pix'],
-};
+// Stage 35: Conceptual Zod Validation Schema
+export const ParsedChecklistSchema = z.object({
+  documentTitle: z.string().nullable().optional(),
+  sections: z.array(
+    z.object({
+      title: z.string(),
+      scenarios: z.array(
+        z.object({
+          title: z.string(),
+          description: z.string().nullable().optional(),
+          confidence: z.number().min(0).max(1),
+          preconditions: z.array(z.string()).default([]),
+          steps: z.array(
+            z.object({
+              text: z.string(),
+              order: z.number(),
+            })
+          ).default([]),
+          assertions: z.array(
+            z.object({
+              text: z.string(),
+              confidence: z.number().min(0).max(1),
+              order: z.number(),
+            })
+          ).default([]),
+          instructions: z.array(z.string()).default([]),
+          requiresEvidence: z.boolean().default(false),
+        })
+      ),
+    })
+  ),
+  ignoredElements: z.array(
+    z.object({
+      text: z.string(),
+      classification: z.enum([
+        'INSTRUCTION',
+        'RESPONSE_OPTION',
+        'OBSERVATION_FIELD',
+        'DATA_INPUT_FIELD',
+        'EVIDENCE_REQUEST',
+        'FINAL_VERDICT',
+        'METADATA',
+        'SEPARATOR',
+        'IGNORE',
+        'UNKNOWN',
+        'DOCUMENT_TITLE',
+        'SECTION_TITLE',
+        'SUBSECTION_TITLE',
+        'TEST_SCENARIO_TITLE',
+        'DESCRIPTION',
+        'CONTEXT',
+        'PRECONDITION',
+        'ACTION_STEP',
+        'EXPECTED_RESULT',
+        'TEST_ASSERTION',
+        'WARNING',
+      ]),
+      reason: z.string(),
+    })
+  ).default([]),
+  needsReview: z.array(
+    z.object({
+      text: z.string(),
+      probableClassification: z.string(),
+      confidence: z.number(),
+      reason: z.string(),
+    })
+  ).default([]),
+});
 
-// Patterns indicating non-test document headers, metadata, or footers to skip
-const METADATA_HEADER_REGEX = /^(projeto|site|url|data|responsável|autor|cliente|versão|status|relatório|sumário|página|copyright|observações|empresa|documento|checklist de)\s*:/i;
+// Sanity rejection patterns for standalone non-test phrases (Etapa 33)
+const SANITY_REJECT_REGEX = /^(anote o resultado|tire print|grave a tela|observação|observações|nota|notas|print\/vídeo|tela|navegador|dispositivo|funcionou|não funcionou|funcionou com problema|com ressalva|aprovado|reprovado|precisa de correções|sistema aprovado|funciona\?|correto\?|sim|não)\b/i;
 
-// Patterns indicating a real checklist item or question
-const CHECKBOX_BULLET_REGEX = /^[\[\(\s]*(?:[ xXvV✓✕?]|☐|☑|☒|◯|\d+[\.\)]|[-*•])[\)\s\]]*/;
-const ACTION_VERB_REGEX = /\b(verificar|testar|validar|checar|garantir|conferir|o usuário deve|é necessário|certificar|analisar|funciona|envia|abrir|carregar|cancelar|remarcar|agendar)\b/i;
-const KEYWORD_SUBJECT_REGEX = /\b(menu|botão|formulário|whatsapp|mobile|agendamento|responsiv|link|cancelamento|remarcação|redireciona|layout|360px|desktop|footer|header)\b/i;
+const INSTRUCTION_REGEX = /^(anote|observe|não envie|feche sem|siga os passos|preencha o formulário e anote|consulte a tabela|leia antes)\b/i;
+const EVIDENCE_REGEX = /^(tire print|grave a tela|anexe o print|envie a captura|captura de tela|print\/vídeo|comprovante|evidência)\b/i;
+const RESPONSE_OPTION_REGEX = /^(funcionou|não funcionou|funcionou com problema|com ressalva|aprovado|reprovado|sim|não|pendente|precisa de correções)$/i;
+const OBSERVATION_FIELD_REGEX = /^(observação|observações|notas|comentários|feedback|ressalva)\s*[:_\-]*$/i;
+const DATA_INPUT_REGEX = /^(tela|navegador|dispositivo|computador ou celular|o que estava tentando fazer|o que deveria acontecer|o que aconteceu|nome|e-mail|telefone|versão)\s*[:_\-]*$/i;
+const METADATA_REGEX = /^(projeto|site|url|data|responsável|autor|cliente|versão|status|relatório|sumário|página|copyright)\s*:/i;
+const FINAL_VERDICT_REGEX = /^(sistema aprovado|sistema reprovado|sistema precisa de correções|computador aprovado|celular aprovado)$/i;
 
 /**
- * Advanced NLP-style analyzer to extract ONLY actual test questions and checkboxes,
- * filtering out document titles, intro text, metadata, and non-test lines.
+ * Classifies a raw text line into its semantic QA role BEFORE any test generation.
  */
-export function interpretTextLines(rawText: string): ParsedItem[] {
-  const items: ParsedItem[] = [];
+export function classifyLine(line: string): { classification: ClassificationCategory; reason: string } {
+  const trimmed = line.trim();
+
+  if (FINAL_VERDICT_REGEX.test(trimmed)) {
+    return { classification: 'FINAL_VERDICT', reason: 'Veredito final do documento' };
+  }
+  if (RESPONSE_OPTION_REGEX.test(trimmed)) {
+    return { classification: 'RESPONSE_OPTION', reason: 'Opção de resposta pré-definida no documento' };
+  }
+  if (OBSERVATION_FIELD_REGEX.test(trimmed)) {
+    return { classification: 'OBSERVATION_FIELD', reason: 'Campo reservado para observações do testador' };
+  }
+  if (DATA_INPUT_REGEX.test(trimmed)) {
+    return { classification: 'DATA_INPUT_FIELD', reason: 'Campo de entrada de dados de contexto' };
+  }
+  if (EVIDENCE_REGEX.test(trimmed)) {
+    return { classification: 'EVIDENCE_REQUEST', reason: 'Solicitação de captura de tela ou evidência' };
+  }
+  if (INSTRUCTION_REGEX.test(trimmed)) {
+    return { classification: 'INSTRUCTION', reason: 'Instrução/orientação para o testador' };
+  }
+  if (METADATA_REGEX.test(trimmed)) {
+    return { classification: 'METADATA', reason: 'Metadados e cabeçalho do documento' };
+  }
+
+  // Action step vs Expected result / Assertion
+  if (/^(escolha|selecione|adicione|preencha|clique|acesse|abra|remova|cancele|atualize|faça|entre|altere)\b/i.test(trimmed)) {
+    return { classification: 'ACTION_STEP', reason: 'Ação que o testador deve realizar' };
+  }
+
+  if (/^(verificar|verifique|o pedido|pedido|o cliente|o produto|o total|o estoque|o site|o menu|mensagens|status|sistema|endereço|imagem|fotos|quantidade)\b/i.test(trimmed)) {
+    return { classification: 'EXPECTED_RESULT', reason: 'Validação / Resultado esperado a ser observado' };
+  }
+
+  if (trimmed.endsWith('?')) {
+    return { classification: 'TEST_ASSERTION', reason: 'Pergunta de validação explícita' };
+  }
+
+  if (trimmed.length < 25 && !trimmed.includes('.')) {
+    return { classification: 'SECTION_TITLE', reason: 'Título de seção ou cenário' };
+  }
+
+  return { classification: 'UNKNOWN', reason: 'Texto de contexto genérico' };
+}
+
+/**
+ * Advanced Multi-Stage QA Interpreter Pipeline
+ */
+export function parseDocumentStructure(rawText: string): ParsedChecklistStructure {
   const lines = rawText
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l.length > 2 && !l.startsWith('---') && !l.startsWith('==='));
+    .filter((l) => l.length > 0 && !l.startsWith('---') && !l.startsWith('==='));
 
-  let orderCounter = 1;
-  let currentCategoryContext = 'Geral';
+  const resultStructure: ParsedChecklistStructure = {
+    documentTitle: null,
+    sections: [],
+    ignoredElements: [],
+    needsReview: [],
+  };
 
-  for (const rawLine of lines) {
-    // 1. Check if line is a metadata header (e.g. "Projeto: Cuidare", "Data: 02/10/2026") -> Skip
-    if (METADATA_HEADER_REGEX.test(rawLine)) {
-      continue;
-    }
+  let currentSectionTitle = 'Geral';
+  let currentSectionScenarios: Array<{
+    title: string;
+    description?: string | null;
+    confidence: number;
+    preconditions: string[];
+    steps: Array<{ text: string; order: number }>;
+    assertions: Array<{ text: string; confidence: number; order: number }>;
+    instructions: string[];
+    requiresEvidence: boolean;
+  }> = [];
 
-    // 2. Check if line is a Category Header (e.g. "### Navegação", "1. Agendamento", "Formulários:")
-    const cleanHeaderCandidate = rawLine.replace(/^[#\d\.\-\*\:\s]+/, '').trim();
-    if (
-      (rawLine.startsWith('#') || rawLine.endsWith(':') || /^\d+\.\s+[A-ZÀ-Ú\s]{3,}$/.test(rawLine)) &&
-      !ACTION_VERB_REGEX.test(rawLine) &&
-      !rawLine.endsWith('?') &&
-      cleanHeaderCandidate.length < 30
-    ) {
-      // Find category match
-      for (const [catName, keywords] of Object.entries(CATEGORY_MAP)) {
-        if (keywords.some((kw) => cleanHeaderCandidate.toLowerCase().includes(kw))) {
-          currentCategoryContext = catName;
-          break;
-        }
-      }
-      continue; // Skip header line itself from becoming a test question
-    }
+  let currentScenario: {
+    title: string;
+    description?: string | null;
+    confidence: number;
+    preconditions: string[];
+    steps: Array<{ text: string; order: number }>;
+    assertions: Array<{ text: string; confidence: number; order: number }>;
+    instructions: string[];
+    requiresEvidence: boolean;
+  } | null = null;
 
-    // 3. Check if line is an actual TEST ITEM candidate
-    const isCheckboxOrBullet = CHECKBOX_BULLET_REGEX.test(rawLine);
-    const isQuestion = rawLine.endsWith('?');
-    const hasActionVerb = ACTION_VERB_REGEX.test(rawLine);
-    const hasKeywordSubject = KEYWORD_SUBJECT_REGEX.test(rawLine);
-
-    // Filter out plain narrative sentences that are NOT test items
-    if (!isCheckboxOrBullet && !isQuestion && !hasActionVerb && !hasKeywordSubject) {
-      continue;
-    }
-
-    // Strip bullet markers, numbers, checkboxes
-    const cleanLine = rawLine
-      .replace(/^[\[\(\s]*(?:[ xXvV✓✕?]|☐|☑|☒|◯)[\)\s\]]*/, '')
-      .replace(/^[\d\s.\-*•✓✕–—()]+/, '')
-      .replace(/^(verificar|testar|validar|checar|garantir|conferir|o usuário deve|é necessário)\s+/i, '')
-      .trim();
-
-    if (!cleanLine || cleanLine.length < 4) continue;
-
-    // 4. Split compound requirements ("...remarcar e cancelar...", "...WhatsApp e formulário...")
-    const subParts: string[] = [];
-
-    if (/\b(principalmente|especialmente)\b/i.test(cleanLine)) {
-      const parts = cleanLine.split(/\b(principalmente|especialmente)\b/i);
-      if (parts.length >= 3) {
-        subParts.push(parts[0].trim());
-        const rest = parts[2].split(/,| e /i);
-        rest.forEach((r) => subParts.push(r.trim()));
-      } else {
-        subParts.push(cleanLine);
-      }
-    } else if (
-      /\be\b/i.test(cleanLine) &&
-      (cleanLine.includes('remarcar') || cleanLine.includes('cancelar') || cleanLine.includes('botão') || cleanLine.includes('formulário'))
-    ) {
-      const parts = cleanLine.split(/\be\b/i);
-      parts.forEach((p) => subParts.push(p.trim()));
-    } else {
-      subParts.push(cleanLine);
-    }
-
-    // 5. Transform each extracted part into a clean, actionable test question
-    for (const part of subParts) {
-      if (!part || part.length < 3) continue;
-
-      let question = part;
-      if (!question.endsWith('?')) {
-        if (/^(o|a|os|as|é|funciona|carrega|permite)\b/i.test(question)) {
-          question = `${capitalizeFirst(question)} funciona corretamente?`;
-        } else if (/^(remarcar|cancelar|agendar|enviar)\b/i.test(question)) {
-          question = `É possível ${lowercaseFirst(question)}?`;
-        } else {
-          question = `${capitalizeFirst(question)} funciona corretamente?`;
-        }
-      }
-
-      // Cleanup duplicated text glitches
-      question = question
-        .replace(/funciona corretamente\? funciona corretamente\?/i, 'funciona corretamente?')
-        .replace(/é possível é possível/i, 'É possível')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Determine Category (use keyword matching or section context fallback)
-      const lower = question.toLowerCase();
-      let matchedCategory = currentCategoryContext;
-
-      for (const [catName, keywords] of Object.entries(CATEGORY_MAP)) {
-        if (keywords.some((kw) => lower.includes(kw))) {
-          matchedCategory = catName;
-          break;
-        }
-      }
-
-      // Avoid duplicates
-      if (!items.some((i) => i.question.toLowerCase() === question.toLowerCase())) {
-        items.push({
-          id: `parsed-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-          category: matchedCategory,
-          question,
-          order: orderCounter++,
+  const pushCurrentScenario = () => {
+    if (currentScenario && (currentScenario.steps.length > 0 || currentScenario.assertions.length > 0)) {
+      // If scenario has no assertions, convert last step or title into clean validation
+      if (currentScenario.assertions.length === 0) {
+        currentScenario.assertions.push({
+          text: `O cenário "${currentScenario.title}" deve ser concluído com sucesso.`,
+          confidence: 0.9,
+          order: 1,
         });
       }
+      currentSectionScenarios.push(currentScenario);
+      currentScenario = null;
+    }
+  };
+
+  const pushCurrentSection = () => {
+    pushCurrentScenario();
+    if (currentSectionScenarios.length > 0) {
+      resultStructure.sections.push({
+        title: currentSectionTitle,
+        scenarios: [...currentSectionScenarios],
+      });
+      currentSectionScenarios = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const cleanContent = line.replace(/^[\[\(\s]*(?:[ xXvV✓✕?]|☐|☑|☒|◯)[\)\s\]]*/, '').replace(/^[\d\s.\-*•✓✕–—()]+/, '').trim();
+
+    if (!cleanContent) continue;
+
+    // Sanity check: Immediately filter out non-test phrases (Etapa 33)
+    if (SANITY_REJECT_REGEX.test(cleanContent)) {
+      const { classification, reason } = classifyLine(cleanContent);
+      resultStructure.ignoredElements.push({
+        text: cleanContent,
+        classification,
+        reason: reason || 'Elemento não-testável (instrução, campo ou opção de resposta)',
+      });
+      continue;
+    }
+
+    const { classification, reason } = classifyLine(cleanContent);
+
+    // Filter out Non-Test Items into Ignored List
+    if (
+      classification === 'INSTRUCTION' ||
+      classification === 'RESPONSE_OPTION' ||
+      classification === 'OBSERVATION_FIELD' ||
+      classification === 'DATA_INPUT_FIELD' ||
+      classification === 'EVIDENCE_REQUEST' ||
+      classification === 'FINAL_VERDICT' ||
+      classification === 'METADATA'
+    ) {
+      resultStructure.ignoredElements.push({
+        text: cleanContent,
+        classification,
+        reason,
+      });
+
+      if (classification === 'EVIDENCE_REQUEST' && currentScenario) {
+        currentScenario.requiresEvidence = true;
+      }
+      continue;
+    }
+
+    // Document Title Detection
+    if (i === 0 && (classification === 'SECTION_TITLE' || line.toLowerCase().includes('checklist') || line.toLowerCase().includes('teste'))) {
+      resultStructure.documentTitle = cleanContent;
+      continue;
+    }
+
+    // Section Title Detection
+    if (classification === 'SECTION_TITLE' && !line.endsWith('?')) {
+      if (cleanContent.toUpperCase() === cleanContent && cleanContent.length < 20 && !currentScenario) {
+        pushCurrentSection();
+        currentSectionTitle = cleanContent;
+        continue;
+      }
+
+      // Start new Scenario within section
+      pushCurrentScenario();
+      currentScenario = {
+        title: cleanContent,
+        description: null,
+        confidence: 0.96,
+        preconditions: [],
+        steps: [],
+        assertions: [],
+        instructions: [],
+        requiresEvidence: false,
+      };
+      continue;
+    }
+
+    // Action Step Handling
+    if (classification === 'ACTION_STEP') {
+      if (!currentScenario) {
+        currentScenario = {
+          title: `Execução de ${cleanContent}`,
+          description: null,
+          confidence: 0.9,
+          preconditions: [],
+          steps: [],
+          assertions: [],
+          instructions: [],
+          requiresEvidence: false,
+        };
+      }
+      currentScenario.steps.push({
+        text: cleanContent,
+        order: currentScenario.steps.length + 1,
+      });
+      continue;
+    }
+
+    // Expected Result / Validation Assertion Handling
+    if (classification === 'EXPECTED_RESULT' || classification === 'TEST_ASSERTION') {
+      if (!currentScenario) {
+        currentScenario = {
+          title: `Validação de ${cleanContent}`,
+          description: null,
+          confidence: 0.92,
+          preconditions: [],
+          steps: [],
+          assertions: [],
+          instructions: [],
+          requiresEvidence: false,
+        };
+      }
+
+      // Rewrite sentence into a clean, testable QA assertion without appending fixed suffixes!
+      let formattedAssertion = cleanContent;
+      if (!formattedAssertion.endsWith('?')) {
+        if (/^(pedido|o pedido|cliente|produto|total|tipo|endereço|estoque|site|menu|status)/i.test(formattedAssertion)) {
+          formattedAssertion = `${capitalizeFirst(formattedAssertion)}.`;
+        } else {
+          formattedAssertion = `${capitalizeFirst(formattedAssertion)}.`;
+        }
+      }
+
+      // Check confidence score
+      const itemConfidence = cleanContent.length > 5 ? 0.95 : 0.65;
+
+      if (itemConfidence < 0.7) {
+        resultStructure.needsReview.push({
+          text: cleanContent,
+          probableClassification: 'Validação Ambígua',
+          confidence: itemConfidence,
+          reason: 'Trecho com baixa confiança de interpretação. Verifique se deve virar validação ou ser ignorado.',
+        });
+      } else {
+        currentScenario.assertions.push({
+          text: formattedAssertion,
+          confidence: itemConfidence,
+          order: currentScenario.assertions.length + 1,
+        });
+      }
+      continue;
     }
   }
 
-  // Fallback if document yielded zero parsed test items
-  if (items.length === 0) {
-    items.push(
-      { id: 'p-1', category: 'Navegação', question: 'O menu principal e links funcionam corretamente?', order: 1 },
-      { id: 'p-2', category: 'Formulários', question: 'O formulário de contato envia corretamente?', order: 2 },
-      { id: 'p-3', category: 'Responsividade', question: 'O layout é totalmente responsivo em dispositivos móveis?', order: 3 }
-    );
+  // Push final open scenario and section
+  pushCurrentSection();
+
+  // Fallback if structure is empty
+  if (resultStructure.sections.length === 0) {
+    resultStructure.sections.push({
+      title: 'Geral',
+      scenarios: [
+        {
+          title: 'Abertura e navegação do site',
+          description: 'Validar carregamento inicial das páginas principais.',
+          confidence: 0.98,
+          preconditions: [],
+          steps: [
+            { text: 'Acesse o site principal.', order: 1 },
+            { text: 'Navegue entre as seções.', order: 2 },
+          ],
+          assertions: [
+            { text: 'O site abre normalmente sem erros de carregamento.', confidence: 0.99, order: 1 },
+            { text: 'O menu principal e formulários funcionam corretamente.', confidence: 0.98, order: 2 },
+          ],
+          instructions: [],
+          requiresEvidence: false,
+        },
+      ],
+    });
   }
 
-  return items;
+  // Validate parsed JSON output with Zod Schema (Etapa 35)
+  const validationResult = ParsedChecklistSchema.safeParse(resultStructure);
+  if (!validationResult.success) {
+    console.warn('Zod validation warning, fallback to raw structure', validationResult.error);
+  }
+
+  return resultStructure;
 }
 
 function capitalizeFirst(str: string): string {
@@ -162,61 +382,70 @@ function capitalizeFirst(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-function lowercaseFirst(str: string): string {
-  if (!str) return str;
-  return str.charAt(0).toLowerCase() + str.slice(1);
+/**
+ * Compatibility Bridge: Convert ParsedChecklistStructure into legacy ParsedItem format if needed
+ */
+export function convertStructureToParsedItems(structure: ParsedChecklistStructure): ParsedItem[] {
+  const legacyItems: ParsedItem[] = [];
+  let counter = 1;
+
+  structure.sections.forEach((sec) => {
+    sec.scenarios.forEach((scen) => {
+      scen.assertions.forEach((as) => {
+        legacyItems.push({
+          id: `parsed-${Date.now()}-${counter}`,
+          category: sec.title || 'Geral',
+          question: `${scen.title}: ${as.text}`,
+          order: counter++,
+        });
+      });
+    });
+  });
+
+  return legacyItems;
 }
 
 /**
- * Main parser entry point reading uploaded files (PDF, DOCX, TXT, CSV, XLSX)
+ * Main parser entry point reading uploaded files (PDF, DOCX, TXT, CSV)
  */
-export async function parseChecklistFile(file: File): Promise<ParsedItem[]> {
+export async function parseChecklistFile(file: File): Promise<ParsedChecklistStructure> {
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
 
   try {
-    if (extension === 'txt') {
-      const text = await file.text();
-      return interpretTextLines(text);
-    }
+    let rawText = '';
 
-    if (extension === 'csv') {
-      return new Promise((resolve, reject) => {
+    if (extension === 'txt') {
+      rawText = await file.text();
+    } else if (extension === 'csv') {
+      rawText = await new Promise<string>((resolve, reject) => {
         Papa.parse(file, {
           complete: (results) => {
-            const rawText = results.data
+            const txt = results.data
               .map((row: unknown) => (Array.isArray(row) ? row.join(' ') : String(row)))
               .join('\n');
-            resolve(interpretTextLines(rawText));
+            resolve(txt);
           },
           error: (err) => reject(err),
         });
       });
-    }
-
-    if (extension === 'docx') {
+    } else if (extension === 'docx') {
       const arrayBuffer = await file.arrayBuffer();
       const result = await mammoth.extractRawText({ arrayBuffer });
-      return interpretTextLines(result.value);
-    }
-
-    if (extension === 'pdf') {
-      // PDF text extraction via browser ReadableStream / text decoder heuristics
+      rawText = result.value;
+    } else if (extension === 'pdf') {
       const text = await file.text();
-      // Clean PDF stream text tags
-      const cleanPdfText = text
+      rawText = text
         .replace(/\/Filter\s*\/[A-Za-z0-9]+/g, '')
         .replace(/[^\x20-\x7E\xA0-\xFF\n\r]/g, ' ')
         .replace(/stream[\s\S]*?endstream/g, ' ')
         .replace(/\(([^)]+)\)/g, '$1\n');
-
-      return interpretTextLines(cleanPdfText);
+    } else {
+      rawText = await file.text();
     }
 
-    // Default fallback read text
-    const fallbackText = await file.text();
-    return interpretTextLines(fallbackText);
+    return parseDocumentStructure(rawText);
   } catch (err) {
-    console.error('File parsing error, falling back to default heuristic extraction', err);
+    console.error('File parsing error, falling back to default structure', err);
     throw new Error('Não foi possível interpretar este arquivo. Tente enviar outro formato ou crie o checklist manualmente.');
   }
 }

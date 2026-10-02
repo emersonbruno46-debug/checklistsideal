@@ -34,9 +34,9 @@ export default function AuditReportPage() {
     );
   }
 
-  const items = data.items.filter((i) => i.checklist_template_id === template.id);
-  const categories = data.categories.filter((c) => c.checklist_template_id === template.id);
-  const answers = data.answers;
+  const scenarios = data.scenarios.filter((s) => s.checklist_template_id === template.id);
+  const sections = data.sections.filter((sec) => sec.checklist_template_id === template.id);
+  const scenarioResults = data.scenarioResults;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -46,9 +46,9 @@ export default function AuditReportPage() {
         <ReportView
           project={project}
           run={run}
-          items={items}
-          categories={categories}
-          answers={answers}
+          scenarios={scenarios}
+          sections={sections}
+          scenarioResults={scenarioResults}
         />
       </main>
     </div>

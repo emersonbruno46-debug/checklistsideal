@@ -2,21 +2,21 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { TestRun, TestAnswer } from '@/types/database';
-import { Plus, History, Play, CheckCircle2, AlertCircle, Calendar, ArrowRight } from 'lucide-react';
+import { TestRun, ScenarioResult } from '@/types/database';
+import { Plus, History, Play, Calendar, ArrowRight } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 
 interface RunHistoryListProps {
   projectId: string;
   runs: TestRun[];
-  answers: Record<string, TestAnswer>;
+  scenarioResults: Record<string, ScenarioResult>;
   onNewRun: () => void;
 }
 
 export const RunHistoryList: React.FC<RunHistoryListProps> = ({
   projectId,
   runs,
-  answers,
+  scenarioResults,
   onNewRun,
 }) => {
   return (
@@ -28,7 +28,7 @@ export const RunHistoryList: React.FC<RunHistoryListProps> = ({
             Histórico de Execuções de Testes
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Compare o progresso das auditorias após as correções da equipe
+            Compare o progresso dos cenários de teste após as correções da equipe
           </p>
         </div>
 
@@ -41,17 +41,16 @@ export const RunHistoryList: React.FC<RunHistoryListProps> = ({
         </button>
       </div>
 
-      {/* Comparison Timeline Badges */}
       {runs.length > 1 && (
         <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-5">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
-            Evolução dos Testes
+            Evolução dos Testes por Cenário
           </span>
           <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
             {runs.map((r, idx) => {
-              const runAnswers = Object.values(answers).filter((a) => a.test_run_id === r.id);
-              const problems = runAnswers.filter((a) => a.result === 'no').length;
-              const caveats = runAnswers.filter((a) => a.result === 'caveat').length;
+              const runResList = Object.values(scenarioResults).filter((a) => a.test_run_id === r.id);
+              const problems = runResList.filter((a) => a.result === 'no').length;
+              const caveats = runResList.filter((a) => a.result === 'caveat').length;
 
               return (
                 <React.Fragment key={r.id}>
@@ -75,13 +74,11 @@ export const RunHistoryList: React.FC<RunHistoryListProps> = ({
         </div>
       )}
 
-      {/* Runs List Table */}
       <div className="space-y-3">
         {runs.map((run, idx) => {
           const runNumber = runs.length - idx;
-          const runAnswers = Object.values(answers).filter((a) => a.test_run_id === run.id);
-          const totalAnswers = runAnswers.length;
-          const problemsCount = runAnswers.filter((a) => a.result === 'no').length;
+          const runResList = Object.values(scenarioResults).filter((a) => a.test_run_id === run.id);
+          const problemsCount = runResList.filter((a) => a.result === 'no').length;
 
           return (
             <div

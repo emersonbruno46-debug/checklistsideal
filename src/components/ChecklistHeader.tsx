@@ -2,14 +2,14 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { ExternalLink, CheckCircle2, AlertCircle, AlertTriangle, Clock, Search, CheckSquare, ArrowLeft } from 'lucide-react';
-import { Project, TestRun, ChecklistItem, TestAnswer, AnswerResult } from '@/types/database';
+import { ExternalLink, CheckCircle2, AlertCircle, AlertTriangle, Clock, Search, CheckSquare, ArrowLeft, Layers } from 'lucide-react';
+import { Project, TestRun, ChecklistScenario, ScenarioResult } from '@/types/database';
 
 interface ChecklistHeaderProps {
   project: Project;
   run: TestRun;
-  items: ChecklistItem[];
-  answers: Record<string, TestAnswer>;
+  scenarios: ChecklistScenario[];
+  scenarioResults: Record<string, ScenarioResult>;
   activeFilter: string;
   onFilterChange: (filter: string) => void;
   searchQuery: string;
@@ -20,39 +20,54 @@ interface ChecklistHeaderProps {
 export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
   project,
   run,
-  items,
-  answers,
+  scenarios,
+  scenarioResults,
   activeFilter,
   onFilterChange,
   searchQuery,
   onSearchChange,
   onFinalize,
 }) => {
-  const totalCount = items.length;
+  const totalScenarios = scenarios.length;
   let approvedCount = 0;
   let problemCount = 0;
   let caveatCount = 0;
   let pendingCount = 0;
 
-  items.forEach((item) => {
-    const ans = answers[item.id];
-    if (!ans || ans.result === 'unanswered') {
+  let totalAssertions = 0;
+  let passedAssertions = 0;
+  let failedAssertions = 0;
+
+  scenarios.forEach((scen) => {
+    const res = scenarioResults[`${run.id}_${scen.id}`] || scenarioResults[scen.id];
+    const resultType = res?.result || 'unanswered';
+
+    if (resultType === 'unanswered') {
       pendingCount++;
-    } else if (ans.result === 'yes') {
+    } else if (resultType === 'yes') {
       approvedCount++;
-    } else if (ans.result === 'no') {
+    } else if (resultType === 'no') {
       problemCount++;
-    } else if (ans.result === 'caveat') {
+    } else if (resultType === 'caveat') {
       caveatCount++;
+    }
+
+    if (scen.assertions) {
+      totalAssertions += scen.assertions.length;
+      scen.assertions.forEach((as) => {
+        const st = res?.assertion_results?.[as.id];
+        if (st === 'passed' || resultType === 'yes') passedAssertions++;
+        if (st === 'failed' || resultType === 'no') failedAssertions++;
+      });
     }
   });
 
-  const answeredCount = totalCount - pendingCount;
-  const percentage = totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0;
+  const answeredScenarios = totalScenarios - pendingCount;
+  const percentage = totalScenarios > 0 ? Math.round((answeredScenarios / totalScenarios) * 100) : 0;
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 mb-6 shadow-xs">
-      {/* Top row: Back button, Title & URL, Finalize Action */}
+      {/* Top Title & Action */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-5 mb-5">
         <div>
           <Link
@@ -79,23 +94,20 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
             )}
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Testador: <strong className="text-slate-700">{run.tester_name}</strong> • Iniciado em: {new Date(run.started_at).toLocaleString('pt-BR')}
+            Testador: <strong className="text-slate-700">{run.tester_name}</strong> • Auditoria por Cenários & Validações
           </p>
         </div>
 
-        {/* Finalize Button */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onFinalize}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-5 py-2.5 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2"
-          >
-            <CheckSquare className="w-4 h-4 stroke-[2.5]" />
-            <span>Finalizar Checklist</span>
-          </button>
-        </div>
+        <button
+          onClick={onFinalize}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-5 py-2.5 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2"
+        >
+          <CheckSquare className="w-4 h-4 stroke-[2.5]" />
+          <span>Finalizar Checklist</span>
+        </button>
       </div>
 
-      {/* Counter Cards Grid */}
+      {/* Counter Cards Grid (Etapa 28: Separate Scenarios and Assertions Metrics) */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
         <button
           onClick={() => onFilterChange('all')}
@@ -105,8 +117,9 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
               : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
-          <div className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Total</div>
-          <div className="text-xl font-extrabold mt-0.5">{totalCount} testes</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Cenários</div>
+          <div className="text-xl font-extrabold mt-0.5">{totalScenarios}</div>
+          <div className="text-[10px] opacity-70 mt-0.5">{totalAssertions} validações</div>
         </button>
 
         <button
@@ -122,6 +135,7 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
             <CheckCircle2 className="w-4 h-4" />
             {approvedCount}
           </div>
+          <div className="text-[10px] opacity-80 mt-0.5">{passedAssertions} validações ok</div>
         </button>
 
         <button
@@ -137,6 +151,7 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
             <AlertCircle className="w-4 h-4" />
             {problemCount}
           </div>
+          <div className="text-[10px] opacity-80 mt-0.5">{failedAssertions} falhas</div>
         </button>
 
         <button
@@ -152,6 +167,7 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
             <AlertTriangle className="w-4 h-4" />
             {caveatCount}
           </div>
+          <div className="text-[10px] opacity-80 mt-0.5">com observação</div>
         </button>
 
         <button
@@ -167,13 +183,14 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
             <Clock className="w-4 h-4" />
             {pendingCount}
           </div>
+          <div className="text-[10px] opacity-80 mt-0.5">a testar</div>
         </button>
       </div>
 
-      {/* Overall Progress Bar */}
-      <div className="mb-5">
+      {/* Progress Bar */}
+      <div className="mb-4">
         <div className="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1.5">
-          <span>Progresso geral do checklist ({answeredCount} de {totalCount})</span>
+          <span>Progresso dos cenários de teste ({answeredScenarios} de {totalScenarios})</span>
           <span className="text-indigo-600">{percentage}% concluído</span>
         </div>
         <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
@@ -186,9 +203,8 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
         </div>
       </div>
 
-      {/* Filters and Search Bar */}
+      {/* Filters & Search */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
-        {/* Filter Pills */}
         <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
           {[
             { key: 'all', label: 'Todos' },
@@ -211,12 +227,11 @@ export const ChecklistHeader: React.FC<ChecklistHeaderProps> = ({
           ))}
         </div>
 
-        {/* Search Input */}
         <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
-            placeholder="Buscar teste..."
+            placeholder="Buscar cenário ou validação..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"

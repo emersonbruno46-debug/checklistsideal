@@ -1,28 +1,19 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { Project, TestRun, ChecklistItem, TestAnswer, ChecklistCategory } from '@/types/database';
-
-interface ExportData {
-  project: Project;
-  run: TestRun;
-  items: ChecklistItem[];
-  categories: ChecklistCategory[];
-  answers: Record<string, TestAnswer>;
-  onlyProblems?: boolean;
-}
+import { Project, TestRun, ChecklistScenario, ScenarioResult, ChecklistSection } from '@/types/database';
 
 export function copyProblemsToClipboard(
   project: Project,
-  items: ChecklistItem[],
-  answers: Record<string, TestAnswer>
+  scenarios: ChecklistScenario[],
+  scenarioResults: Record<string, ScenarioResult>
 ): string {
-  const problems = items.filter((item) => {
-    const ans = answers[item.id];
-    return ans && (ans.result === 'no' || ans.result === 'caveat');
+  const problems = scenarios.filter((scen) => {
+    const res = scenarioResults[scen.id] || scenarioResults[`${scen.checklist_template_id}_${scen.id}`];
+    return res && (res.result === 'no' || res.result === 'caveat');
   });
 
   if (problems.length === 0) {
-    const cleanMsg = `PROJETO: ${project.name}\n${project.website_url ? `URL: ${project.website_url}\n` : ''}\nNenhum problema encontrado neste checklist! Todos os testes foram aprovados.`;
+    const cleanMsg = `PROJETO: ${project.name}\n${project.website_url ? `URL: ${project.website_url}\n` : ''}\nNenhum problema encontrado nesta auditoria! Todos os cenários foram aprovados.`;
     navigator.clipboard.writeText(cleanMsg);
     return cleanMsg;
   }
@@ -32,21 +23,39 @@ export function copyProblemsToClipboard(
     text += `URL: ${project.website_url}\n`;
   }
   text += `DATA DA AUDITORIA: ${new Date().toLocaleDateString('pt-BR')}\n\n`;
-  text += `--- PROBLEMAS ENCONTRADOS (${problems.length}) ---\n\n`;
+  text += `--- PROBLEMAS E RESSALVAS ENCONTRADOS (${problems.length} CENÁRIOS) ---\n\n`;
 
-  problems.forEach((item, index) => {
-    const ans = answers[item.id];
-    const statusText = ans.result === 'no' ? 'Não funciona' : 'Com ressalva';
-    const severityText = ans.severity
-      ? ans.severity === 'critical' ? 'Crítica' : ans.severity === 'high' ? 'Alta' : ans.severity === 'medium' ? 'Média' : 'Baixa'
+  problems.forEach((scen, index) => {
+    const res = scenarioResults[scen.id] || scenarioResults[`${scen.checklist_template_id}_${scen.id}`];
+    const statusText = res.result === 'no' ? 'NÃO FUNCIONA' : 'COM RESSALVA';
+    const severityText = res.severity
+      ? res.severity === 'critical' ? 'Crítica' : res.severity === 'high' ? 'Alta' : res.severity === 'medium' ? 'Média' : 'Baixa'
       : 'Não especificada';
 
-    text += `${index + 1}. ${item.question.toUpperCase()}\n`;
+    text += `${index + 1}. CENÁRIO: ${scen.title.toUpperCase()}\n`;
+    if (scen.section_title) text += `Seção: ${scen.section_title}\n`;
     text += `Status: ${statusText}\n`;
-    if (ans.result === 'no') {
+    if (res.result === 'no') {
       text += `Gravidade: ${severityText}\n`;
     }
-    text += `Observação: ${ans.note || 'Sem observações adicionais.'}\n\n`;
+
+    if (scen.steps && scen.steps.length > 0) {
+      text += `Passos executados:\n`;
+      scen.steps.forEach((st) => {
+        text += `  ${st.order}. ${st.text}\n`;
+      });
+    }
+
+    if (scen.assertions && scen.assertions.length > 0) {
+      text += `Validações:\n`;
+      scen.assertions.forEach((as) => {
+        const astStatus = res.assertion_results?.[as.id] || 'pending';
+        const symbol = astStatus === 'passed' ? '✓' : astStatus === 'failed' ? '✕' : '⚠';
+        text += `  [${symbol}] ${as.text}\n`;
+      });
+    }
+
+    text += `Observação: ${res.note || 'Sem observações adicionais.'}\n\n`;
   });
 
   navigator.clipboard.writeText(text);
@@ -56,29 +65,38 @@ export function copyProblemsToClipboard(
 export function exportToCSV(
   project: Project,
   run: TestRun,
-  items: ChecklistItem[],
-  categories: ChecklistCategory[],
-  answers: Record<string, TestAnswer>
+  scenarios: ChecklistScenario[],
+  sections: ChecklistSection[],
+  scenarioResults: Record<string, ScenarioResult>
 ) {
-  const catMap = new Map(categories.map((c) => [c.id, c.name]));
-
   const rows = [
     ['Projeto', project.name],
     ['URL', project.website_url || 'N/A'],
     ['Testador', run.tester_name],
     ['Data', new Date(run.started_at).toLocaleDateString('pt-BR')],
     [''],
-    ['Categoria', 'Pergunta / Teste', 'Resultado', 'Gravidade', 'Observações / Ressalvas'],
+    ['Seção', 'Cenário de Teste', 'Passos', 'Validações (Assertions)', 'Resultado Geral', 'Gravidade', 'Observações'],
   ];
 
-  items.forEach((item) => {
-    const ans = answers[item.id];
-    const catName = (item.category_id && catMap.get(item.category_id)) || item.category_name || 'Geral';
-    const res = !ans || ans.result === 'unanswered' ? 'Pendente' : ans.result === 'yes' ? 'Aprovado' : ans.result === 'no' ? 'Não Funciona' : 'Com Ressalva';
-    const sev = ans?.severity ? ans.severity : 'N/A';
-    const note = ans?.note ? ans.note.replace(/\n/g, ' ') : '';
+  scenarios.forEach((scen) => {
+    const res = scenarioResults[scen.id] || scenarioResults[`${run.id}_${scen.id}`];
+    const secTitle = scen.section_title || 'Geral';
+    const resultStr = !res || res.result === 'unanswered' ? 'Pendente' : res.result === 'yes' ? 'Aprovado' : res.result === 'no' ? 'Não Funciona' : 'Com Ressalva';
+    const sev = res?.severity || 'N/A';
+    const note = res?.note ? res.note.replace(/\n/g, ' ') : '';
 
-    rows.push([catName, `"${item.question.replace(/"/g, '""')}"`, res, sev, `"${note.replace(/"/g, '""')}"`]);
+    const stepsStr = scen.steps ? scen.steps.map((s) => `${s.order}. ${s.text}`).join(' | ') : '';
+    const assertionsStr = scen.assertions ? scen.assertions.map((a) => a.text).join(' | ') : '';
+
+    rows.push([
+      secTitle,
+      `"${scen.title.replace(/"/g, '""')}"`,
+      `"${stepsStr.replace(/"/g, '""')}"`,
+      `"${assertionsStr.replace(/"/g, '""')}"`,
+      resultStr,
+      sev,
+      `"${note.replace(/"/g, '""')}"`,
+    ]);
   });
 
   const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + rows.map((e) => e.join(';')).join('\n');
@@ -94,15 +112,15 @@ export function exportToCSV(
 export function exportToJSON(
   project: Project,
   run: TestRun,
-  items: ChecklistItem[],
-  answers: Record<string, TestAnswer>
+  scenarios: ChecklistScenario[],
+  scenarioResults: Record<string, ScenarioResult>
 ) {
   const exportData = {
     project,
     test_run: run,
-    items: items.map((item) => ({
-      ...item,
-      answer: answers[item.id] || { result: 'unanswered' },
+    scenarios: scenarios.map((scen) => ({
+      ...scen,
+      result: scenarioResults[scen.id] || { result: 'unanswered' },
     })),
     exported_at: new Date().toISOString(),
   };
@@ -116,9 +134,6 @@ export function exportToJSON(
   downloadAnchor.remove();
 }
 
-/**
- * Generate PDF report from element or programmatic PDF construction
- */
 export async function generatePDFReport(elementId: string, filename: string): Promise<void> {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -140,9 +155,6 @@ export async function generatePDFReport(elementId: string, filename: string): Pr
     const pdfHeight = pdf.internal.pageSize.getHeight();
     const imgWidth = canvas.width;
     const imgHeight = canvas.height;
-    const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
-    const imgX = (pdfWidth - imgWidth * ratio) / 2;
-    let imgY = 0;
 
     const pageHeight = (imgHeight * pdfWidth) / canvas.width;
     let heightLeft = pageHeight;

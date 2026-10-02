@@ -2,16 +2,14 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Project, TestRun, ChecklistItem, TestAnswer, ChecklistCategory } from '@/types/database';
+import { Project, TestRun, ChecklistScenario, ScenarioResult, ChecklistSection } from '@/types/database';
 import { StatusBadge } from './StatusBadge';
 import { generatePDFReport, exportToCSV, exportToJSON, copyProblemsToClipboard } from '@/lib/pdf-export';
 import {
   Download,
   Copy,
-  Printer,
   FileSpreadsheet,
   FileCode,
-  FileText,
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -19,50 +17,67 @@ import {
   ExternalLink,
   Check,
   ShieldAlert,
+  ListChecks,
+  ArrowRight,
 } from 'lucide-react';
 
 interface ReportViewProps {
   project: Project;
   run: TestRun;
-  items: ChecklistItem[];
-  categories: ChecklistCategory[];
-  answers: Record<string, TestAnswer>;
+  scenarios: ChecklistScenario[];
+  sections: ChecklistSection[];
+  scenarioResults: Record<string, ScenarioResult>;
 }
 
 export const ReportView: React.FC<ReportViewProps> = ({
   project,
   run,
-  items,
-  categories,
-  answers,
+  scenarios,
+  sections,
+  scenarioResults,
 }) => {
   const [copiedText, setCopiedText] = useState<boolean>(false);
   const [exportingPDF, setExportingPDF] = useState<boolean>(false);
 
-  // Compute Statistics
-  const totalCount = items.length;
-  let approvedCount = 0;
-  let problemCount = 0;
-  let caveatCount = 0;
-  let pendingCount = 0;
+  // Compute Statistics (Etapa 28)
+  const totalScenarios = scenarios.length;
+  let approvedScenarios = 0;
+  let problemScenarios = 0;
+  let caveatScenarios = 0;
+  let pendingScenarios = 0;
 
-  items.forEach((item) => {
-    const ans = answers[item.id];
-    if (!ans || ans.result === 'unanswered') {
-      pendingCount++;
-    } else if (ans.result === 'yes') {
-      approvedCount++;
-    } else if (ans.result === 'no') {
-      problemCount++;
-    } else if (ans.result === 'caveat') {
-      caveatCount++;
+  let totalAssertions = 0;
+  let passedAssertions = 0;
+  let failedAssertions = 0;
+
+  scenarios.forEach((scen) => {
+    const res = scenarioResults[scen.id] || scenarioResults[`${run.id}_${scen.id}`];
+    const resultType = res?.result || 'unanswered';
+
+    if (resultType === 'unanswered') {
+      pendingScenarios++;
+    } else if (resultType === 'yes') {
+      approvedScenarios++;
+    } else if (resultType === 'no') {
+      problemScenarios++;
+    } else if (resultType === 'caveat') {
+      caveatScenarios++;
+    }
+
+    if (scen.assertions) {
+      totalAssertions += scen.assertions.length;
+      scen.assertions.forEach((as) => {
+        const st = res?.assertion_results?.[as.id];
+        if (st === 'passed' || resultType === 'yes') passedAssertions++;
+        if (st === 'failed' || resultType === 'no') failedAssertions++;
+      });
     }
   });
 
-  const approvalRate = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0;
+  const approvalRate = totalScenarios > 0 ? Math.round((approvedScenarios / totalScenarios) * 100) : 0;
 
   const handleCopyProblems = () => {
-    copyProblemsToClipboard(project, items, answers);
+    copyProblemsToClipboard(project, scenarios, scenarioResults);
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 2500);
   };
@@ -94,11 +109,11 @@ export const ReportView: React.FC<ReportViewProps> = ({
             Relatório Oficial de Auditoria
           </h2>
           <p className="text-xs text-slate-500">
-            Exportável para cliente e equipe de desenvolvimento
+            Estruturado por Cenários de Testes, Passos e Validações de QA
           </p>
         </div>
 
-        {/* Export Buttons */}
+        {/* Export Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={handleCopyProblems}
@@ -127,7 +142,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
           </button>
 
           <button
-            onClick={() => exportToCSV(project, run, items, categories, answers)}
+            onClick={() => exportToCSV(project, run, scenarios, sections, scenarioResults)}
             className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -135,7 +150,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
           </button>
 
           <button
-            onClick={() => exportToJSON(project, run, items, answers)}
+            onClick={() => exportToJSON(project, run, scenarios, scenarioResults)}
             className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
           >
             <FileCode className="w-3.5 h-3.5" />
@@ -154,11 +169,11 @@ export const ReportView: React.FC<ReportViewProps> = ({
                 Ideal Checklist&apos;s
               </span>
               <span className="text-xs bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded">
-                AUDITORIA WEB
+                RELATÓRIO DE QA
               </span>
             </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Sistema de Controle de Qualidade e Validação de Interfaces
+              Validação de Interfaces e Cenários de Software
             </p>
           </div>
           <div className="text-right">
@@ -199,27 +214,30 @@ export const ReportView: React.FC<ReportViewProps> = ({
           </div>
         </div>
 
-        {/* Executive Summary Metrics Card */}
+        {/* Executive Summary Metrics Card (Etapa 28) */}
         <div className="mb-8">
           <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-3">
-            Resumo Executivo
+            Resumo Executivo de QA
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
-              <span className="text-xs font-medium text-slate-500">Total de Testes</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">{totalCount}</div>
+              <span className="text-xs font-medium text-slate-500">Cenários de Teste</span>
+              <div className="text-2xl font-black text-slate-900 mt-1">{totalScenarios}</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">{totalAssertions} validações</div>
             </div>
             <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 text-center">
               <span className="text-xs font-semibold text-emerald-700">Aprovados</span>
-              <div className="text-2xl font-black text-emerald-800 mt-1">{approvedCount}</div>
+              <div className="text-2xl font-black text-emerald-800 mt-1">{approvedScenarios}</div>
+              <div className="text-[11px] text-emerald-700 mt-0.5">{passedAssertions} validações ok</div>
             </div>
             <div className="bg-rose-50 p-4 rounded-xl border border-rose-200 text-center">
               <span className="text-xs font-semibold text-rose-700">Problemas</span>
-              <div className="text-2xl font-black text-rose-800 mt-1">{problemCount}</div>
+              <div className="text-2xl font-black text-rose-800 mt-1">{problemScenarios}</div>
+              <div className="text-[11px] text-rose-700 mt-0.5">{failedAssertions} falhas</div>
             </div>
             <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-center">
               <span className="text-xs font-semibold text-amber-700">Com Ressalva</span>
-              <div className="text-2xl font-black text-amber-800 mt-1">{caveatCount}</div>
+              <div className="text-2xl font-black text-amber-800 mt-1">{caveatScenarios}</div>
             </div>
             <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-200 text-center col-span-2 sm:col-span-1">
               <span className="text-xs font-semibold text-indigo-700">Taxa de Aprovação</span>
@@ -228,21 +246,21 @@ export const ReportView: React.FC<ReportViewProps> = ({
           </div>
         </div>
 
-        {/* Detailed Results List */}
+        {/* Detailed Scenarios List (Etapa 26) */}
         <div>
           <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-4">
-            Detalhamento dos Testes Executados
+            Detalhamento dos Cenários de Teste Executados
           </h3>
 
-          <div className="space-y-4">
-            {items.map((item, idx) => {
-              const ans = answers[item.id];
-              const result = ans?.result || 'unanswered';
+          <div className="space-y-6">
+            {scenarios.map((scen, idx) => {
+              const res = scenarioResults[scen.id] || scenarioResults[`${run.id}_${scen.id}`];
+              const result = res?.result || 'unanswered';
 
               return (
                 <div
-                  key={item.id}
-                  className={`p-4 rounded-xl border transition-all ${
+                  key={scen.id}
+                  className={`p-5 rounded-xl border transition-all ${
                     result === 'yes'
                       ? 'bg-emerald-50/20 border-emerald-200'
                       : result === 'no'
@@ -252,9 +270,9 @@ export const ReportView: React.FC<ReportViewProps> = ({
                       : 'bg-slate-50 border-slate-200'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  {/* Scenario Title Bar */}
+                  <div className="flex items-start justify-between gap-3 border-b border-slate-200/60 pb-3 mb-3">
                     <div className="flex items-start gap-3">
-                      {/* Result Icon */}
                       <div className="mt-0.5">
                         {result === 'yes' && <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
                         {result === 'no' && <XCircle className="w-5 h-5 text-rose-600" />}
@@ -264,49 +282,104 @@ export const ReportView: React.FC<ReportViewProps> = ({
 
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-bold text-slate-400">#{idx + 1}</span>
-                          {item.category_name && (
+                          <span className="text-xs font-bold text-slate-400">Cenário #{idx + 1}</span>
+                          {scen.section_title && (
                             <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                              {item.category_name}
+                              {scen.section_title}
                             </span>
                           )}
                         </div>
-                        <h4 className="text-sm font-bold text-slate-900 leading-snug">
-                          {item.question}
+                        <h4 className="text-base font-bold text-slate-900 leading-snug">
+                          {scen.title}
                         </h4>
+                        {scen.description && (
+                          <p className="text-xs text-slate-500 mt-0.5">{scen.description}</p>
+                        )}
                       </div>
                     </div>
 
                     <StatusBadge result={result} />
                   </div>
 
-                  {/* Notes & Severity Details */}
-                  {ans && (ans.note || ans.severity || (ans.attachments && ans.attachments.length > 0)) && (
-                    <div className="mt-3 pt-3 border-t border-slate-200/60 pl-8 space-y-2 text-xs">
-                      {ans.severity && (
+                  {/* Executed Steps List */}
+                  {scen.steps && scen.steps.length > 0 && (
+                    <div className="bg-white/80 p-3 rounded-lg border border-slate-200 mb-3 text-xs">
+                      <span className="font-bold text-slate-700 uppercase tracking-wider block mb-1 flex items-center gap-1">
+                        <ArrowRight className="w-3.5 h-3.5 text-indigo-600" />
+                        Passos Executados:
+                      </span>
+                      <ol className="list-decimal list-inside space-y-1 text-slate-800 font-medium pl-1">
+                        {scen.steps.map((st) => (
+                          <li key={st.id}>{st.text}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
+                  {/* Assertions Checkmarks List */}
+                  {scen.assertions && scen.assertions.length > 0 && (
+                    <div className="space-y-1 text-xs mb-3">
+                      <span className="font-bold text-slate-700 uppercase tracking-wider block mb-1 flex items-center gap-1">
+                        <ListChecks className="w-3.5 h-3.5 text-emerald-600" />
+                        Validações do Cenário:
+                      </span>
+                      {scen.assertions.map((as) => {
+                        const astStatus = res?.assertion_results?.[as.id] || 'pending';
+                        const isPassed = astStatus === 'passed' || result === 'yes';
+                        const isFailed = astStatus === 'failed' || (result === 'no' && !astStatus);
+
+                        return (
+                          <div
+                            key={as.id}
+                            className={`flex items-center gap-2 p-2 rounded-md border font-medium ${
+                              isPassed
+                                ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900'
+                                : isFailed
+                                ? 'bg-rose-50/50 border-rose-200 text-rose-900'
+                                : 'bg-slate-50 border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {isPassed ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            ) : isFailed ? (
+                              <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                            ) : (
+                              <div className="w-4 h-4 rounded border-2 border-slate-300 shrink-0" />
+                            )}
+                            <span>{as.text}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Notes & Severities */}
+                  {res && (res.note || res.severity || (res.attachments && res.attachments.length > 0)) && (
+                    <div className="mt-3 pt-3 border-t border-slate-200/80 space-y-2 text-xs">
+                      {res.severity && (
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-slate-600">Gravidade:</span>
-                          <StatusBadge severity={ans.severity} size="sm" />
+                          <span className="font-semibold text-slate-600">Gravidade do problema:</span>
+                          <StatusBadge severity={res.severity} size="sm" />
                         </div>
                       )}
 
-                      {ans.note && (
+                      {res.note && (
                         <div>
                           <span className="font-semibold text-slate-700 block mb-0.5">
                             {result === 'no' ? 'Problema encontrado:' : result === 'caveat' ? 'Ressalva:' : 'Observação:'}
                           </span>
                           <p className="text-slate-800 bg-white p-2.5 rounded-lg border border-slate-200 italic">
-                            &ldquo;{ans.note}&rdquo;
+                            &ldquo;{res.note}&rdquo;
                           </p>
                         </div>
                       )}
 
                       {/* Evidence Image */}
-                      {ans.attachments && ans.attachments.length > 0 && (
+                      {res.attachments && res.attachments.length > 0 && (
                         <div className="pt-1">
                           <span className="font-semibold text-slate-600 block mb-1">Evidência:</span>
                           <img
-                            src={ans.attachments[0].file_url}
+                            src={res.attachments[0].file_url}
                             alt="Evidência"
                             className="max-h-48 rounded-lg border border-slate-300 object-cover shadow-2xs"
                           />
@@ -320,7 +393,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
           </div>
         </div>
 
-        {/* Footer info */}
+        {/* Document Footer */}
         <div className="mt-10 pt-6 border-t border-slate-200 text-center text-xs text-slate-400">
           Ideal Checklist&apos;s • Relatório de Auditoria de Software e Interfaces Web • Gerado automaticamente
         </div>

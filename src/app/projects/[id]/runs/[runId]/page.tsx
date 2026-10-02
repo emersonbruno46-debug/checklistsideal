@@ -7,7 +7,7 @@ import { ChecklistHeader } from '@/components/ChecklistHeader';
 import { TestItemCard } from '@/components/TestItemCard';
 import { FinalizeModal } from '@/components/FinalizeModal';
 import { getStorageData, saveStorageData } from '@/lib/storage';
-import { AnswerResult, IssueSeverity, TestAnswer } from '@/types/database';
+import { AnswerResult, IssueSeverity, ScenarioResult, AssertionResultStatus } from '@/types/database';
 
 export default function ActiveTestRunPage() {
   const params = useParams();
@@ -29,56 +29,59 @@ export default function ActiveTestRunPage() {
   const run = data.runs.find((r) => r.id === runId);
   const template = data.templates.find((t) => t.project_id === projectId);
 
-  const items = template
-    ? data.items.filter((i) => i.checklist_template_id === template.id)
+  const scenarios = template
+    ? data.scenarios.filter((s) => s.checklist_template_id === template.id)
     : [];
 
-  const answers = data.answers;
+  const scenarioResults = data.scenarioResults;
 
-  // Filter items by category/status/search
-  const filteredItems = items.filter((item) => {
-    const ans = answers[`${runId}_${item.id}`] || data.answers[item.id];
-    const result = ans?.result || 'unanswered';
+  // Filter scenarios by status or search query
+  const filteredScenarios = scenarios.filter((scen) => {
+    const res = scenarioResults[`${runId}_${scen.id}`] || scenarioResults[scen.id];
+    const resultType = res?.result || 'unanswered';
 
-    if (activeFilter === 'pending' && result !== 'unanswered') return false;
-    if (activeFilter === 'yes' && result !== 'yes') return false;
-    if (activeFilter === 'no' && result !== 'no') return false;
-    if (activeFilter === 'caveat' && result !== 'caveat') return false;
+    if (activeFilter === 'pending' && resultType !== 'unanswered') return false;
+    if (activeFilter === 'yes' && resultType !== 'yes') return false;
+    if (activeFilter === 'no' && resultType !== 'no') return false;
+    if (activeFilter === 'caveat' && resultType !== 'caveat') return false;
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const matchQuestion = item.question.toLowerCase().includes(q);
-      const matchCat = item.category_name?.toLowerCase().includes(q);
-      return matchQuestion || matchCat;
+      const matchTitle = scen.title.toLowerCase().includes(q);
+      const matchSec = scen.section_title?.toLowerCase().includes(q);
+      const matchAssertion = scen.assertions.some((a) => a.text.toLowerCase().includes(q));
+      return matchTitle || matchSec || matchAssertion;
     }
 
     return true;
   });
 
-  const handleAnswerChange = (
-    itemId: string,
+  const handleResultChange = (
+    scenarioId: string,
     result: AnswerResult,
     note?: string,
     severity?: IssueSeverity,
-    attachmentUrl?: string
+    attachmentUrl?: string,
+    assertionResults?: Record<string, AssertionResultStatus>
   ) => {
-    const key = `${runId}_${itemId}`;
-    const existing = answers[key] || answers[itemId];
+    const key = `${runId}_${scenarioId}`;
+    const existing = scenarioResults[key] || scenarioResults[scenarioId];
 
-    const updatedAnswer: TestAnswer = {
-      id: existing?.id || `ans-${Date.now()}-${itemId}`,
+    const updatedResult: ScenarioResult = {
+      id: existing?.id || `res-${Date.now()}-${scenarioId}`,
       test_run_id: runId,
-      checklist_item_id: itemId,
+      scenario_id: scenarioId,
       result,
       note: note || undefined,
       severity: result === 'no' ? severity || 'medium' : undefined,
+      assertion_results: assertionResults || existing?.assertion_results || {},
       created_at: existing?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
       attachments: attachmentUrl
         ? [
             {
               id: `att-${Date.now()}`,
-              test_answer_id: existing?.id || `ans-${Date.now()}-${itemId}`,
+              scenario_result_id: existing?.id || `res-${Date.now()}-${scenarioId}`,
               file_url: attachmentUrl,
               file_type: 'image',
               created_at: new Date().toISOString(),
@@ -88,10 +91,9 @@ export default function ActiveTestRunPage() {
     };
 
     const updatedData = { ...data };
-    updatedData.answers[key] = updatedAnswer;
-    updatedData.answers[itemId] = updatedAnswer; // fallback dual key
+    updatedData.scenarioResults[key] = updatedResult;
+    updatedData.scenarioResults[scenarioId] = updatedResult; // fallback
 
-    // Auto-update run status
     const currentRun = updatedData.runs.find((r) => r.id === runId);
     if (currentRun) {
       currentRun.status = 'in_progress';
@@ -104,7 +106,6 @@ export default function ActiveTestRunPage() {
   // Keyboard Shortcuts (1 = SIM, 2 = NÃO, 3 = RESSALVA)
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      // Ignore shortcut if user is typing inside an input or textarea
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
@@ -115,27 +116,26 @@ export default function ActiveTestRunPage() {
         return;
       }
 
-      if (filteredItems.length === 0) return;
+      if (filteredScenarios.length === 0) return;
 
-      const currentItem = filteredItems[focusedIndex] || filteredItems[0];
-      if (!currentItem) return;
+      const currentScenario = filteredScenarios[focusedIndex] || filteredScenarios[0];
+      if (!currentScenario) return;
 
       if (e.key === '1') {
         e.preventDefault();
-        handleAnswerChange(currentItem.id, 'yes');
-        // Smoothly move focus index to next
-        if (focusedIndex < filteredItems.length - 1) {
+        handleResultChange(currentScenario.id, 'yes');
+        if (focusedIndex < filteredScenarios.length - 1) {
           setFocusedIndex((prev) => prev + 1);
         }
       } else if (e.key === '2') {
         e.preventDefault();
-        handleAnswerChange(currentItem.id, 'no');
+        handleResultChange(currentScenario.id, 'no');
       } else if (e.key === '3') {
         e.preventDefault();
-        handleAnswerChange(currentItem.id, 'caveat');
+        handleResultChange(currentScenario.id, 'caveat');
       }
     },
-    [filteredItems, focusedIndex]
+    [filteredScenarios, focusedIndex]
   );
 
   useEffect(() => {
@@ -154,18 +154,17 @@ export default function ActiveTestRunPage() {
     );
   }
 
-  // Count unanswered items
-  const unansweredCount = items.filter((item) => {
-    const ans = answers[`${runId}_${item.id}`] || answers[item.id];
-    return !ans || ans.result === 'unanswered';
+  // Count unanswered scenarios
+  const unansweredCount = scenarios.filter((scen) => {
+    const res = scenarioResults[`${runId}_${scen.id}`] || scenarioResults[scen.id];
+    return !res || res.result === 'unanswered';
   }).length;
 
   const handleFinalizeConfirm = () => {
     setShowFinalizeModal(false);
 
-    // Calculate final status
-    const runAnsList = items.map((i) => answers[`${runId}_${i.id}`] || answers[i.id]);
-    const hasProblems = runAnsList.some((a) => a?.result === 'no' || a?.result === 'caveat');
+    const runResList = scenarios.map((s) => scenarioResults[`${runId}_${s.id}`] || scenarioResults[s.id]);
+    const hasProblems = runResList.some((r) => r?.result === 'no' || r?.result === 'caveat');
 
     const updated = { ...data };
     const targetRun = updated.runs.find((r) => r.id === runId);
@@ -186,8 +185,8 @@ export default function ActiveTestRunPage() {
         <ChecklistHeader
           project={project}
           run={run}
-          items={items}
-          answers={answers}
+          scenarios={scenarios}
+          scenarioResults={scenarioResults}
           activeFilter={activeFilter}
           onFilterChange={setActiveFilter}
           searchQuery={searchQuery}
@@ -197,7 +196,7 @@ export default function ActiveTestRunPage() {
 
         {/* Keyboard shortcut helper bar */}
         <div className="hidden sm:flex items-center justify-between bg-slate-100/80 px-4 py-2 rounded-lg border border-slate-200 text-xs text-slate-600 mb-6">
-          <span className="font-semibold text-slate-700">Dica de Produtividade (Atalhos):</span>
+          <span className="font-semibold text-slate-700">Dica de Produtividade (Atalhos por Cenário):</span>
           <div className="flex items-center gap-3 font-mono">
             <span><kbd className="bg-white px-1.5 py-0.5 rounded border border-slate-300 shadow-2xs font-bold text-slate-900">1</kbd> = Sim</span>
             <span><kbd className="bg-white px-1.5 py-0.5 rounded border border-slate-300 shadow-2xs font-bold text-slate-900">2</kbd> = Não</span>
@@ -205,19 +204,19 @@ export default function ActiveTestRunPage() {
           </div>
         </div>
 
-        {/* Interactive Items List */}
-        {filteredItems.length > 0 ? (
-          <div className="space-y-4 mb-10">
-            {filteredItems.map((item, idx) => {
-              const ans = answers[`${runId}_${item.id}`] || answers[item.id];
+        {/* Scenario Cards List */}
+        {filteredScenarios.length > 0 ? (
+          <div className="space-y-6 mb-10">
+            {filteredScenarios.map((scenario, idx) => {
+              const res = scenarioResults[`${runId}_${scenario.id}`] || scenarioResults[scenario.id];
               return (
                 <TestItemCard
-                  key={item.id}
-                  item={item}
-                  answer={ans}
+                  key={scenario.id}
+                  scenario={scenario}
+                  result={res}
                   index={idx}
-                  totalCount={filteredItems.length}
-                  onAnswerChange={handleAnswerChange}
+                  totalCount={filteredScenarios.length}
+                  onResultChange={handleResultChange}
                   isFocused={idx === focusedIndex}
                 />
               );
@@ -226,7 +225,7 @@ export default function ActiveTestRunPage() {
         ) : (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center my-6">
             <p className="text-sm font-semibold text-slate-600">
-              Nenhum item encontrado com o filtro selecionado.
+              Nenhum cenário encontrado com o filtro selecionado.
             </p>
             <button
               onClick={() => {
@@ -240,16 +239,16 @@ export default function ActiveTestRunPage() {
           </div>
         )}
 
-        {/* Bottom Sticky Action Bar */}
+        {/* Sticky Action Footer */}
         <div className="sticky bottom-4 z-30 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 p-4 shadow-lg flex items-center justify-between">
           <div className="text-xs text-slate-600">
             {unansweredCount > 0 ? (
               <span className="font-medium text-amber-700">
-                Faltam <strong>{unansweredCount}</strong> teste{unansweredCount !== 1 ? 's' : ''} para concluir
+                Faltam <strong>{unansweredCount}</strong> cenário{unansweredCount !== 1 ? 's' : ''} para concluir
               </span>
             ) : (
               <span className="font-bold text-emerald-600">
-                ✓ Todos os testes foram respondidos!
+                ✓ Todos os cenários de teste foram avaliados!
               </span>
             )}
           </div>
@@ -266,7 +265,7 @@ export default function ActiveTestRunPage() {
       <FinalizeModal
         isOpen={showFinalizeModal}
         unansweredCount={unansweredCount}
-        totalCount={items.length}
+        totalCount={scenarios.length}
         onConfirm={handleFinalizeConfirm}
         onCancel={() => setShowFinalizeModal(false)}
       />

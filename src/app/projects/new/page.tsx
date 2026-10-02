@@ -6,8 +6,26 @@ import { Navbar } from '@/components/Navbar';
 import { ChecklistReviewScreen } from '@/components/ChecklistReviewScreen';
 import { parseChecklistFile } from '@/lib/parser';
 import { getStorageData, saveStorageData } from '@/lib/storage';
-import { ParsedItem, Project, ChecklistTemplate, ChecklistCategory, ChecklistItem, TestRun } from '@/types/database';
-import { Upload, FileText, ArrowLeft, Loader2, Plus, Sparkles, CheckCircle2 } from 'lucide-react';
+import {
+  ParsedChecklistStructure,
+  Project,
+  ChecklistTemplate,
+  ChecklistSection,
+  ChecklistScenario,
+  TestRun,
+} from '@/types/database';
+import { Upload, ArrowLeft, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+
+interface ScenarioDraft {
+  id: string;
+  sectionTitle: string;
+  title: string;
+  description?: string | null;
+  confidence: number;
+  steps: Array<{ id: string; text: string; order: number }>;
+  assertions: Array<{ id: string; text: string; confidence: number; order: number }>;
+  requiresEvidence: boolean;
+}
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -19,8 +37,8 @@ export default function NewProjectPage() {
   const [file, setFile] = useState<File | null>(null);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [loadingText, setLoadingText] = useState('Analisando checklist...');
-  const [parsedItems, setParsedItems] = useState<ParsedItem[] | null>(null);
+  const [loadingText, setLoadingText] = useState('Extraindo conteúdo...');
+  const [parsedStructure, setParsedStructure] = useState<ParsedChecklistStructure | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -44,16 +62,19 @@ export default function NewProjectPage() {
     setIsAnalyzing(true);
     setErrorMessage(null);
 
-    // Discrete loading feedback steps
-    setLoadingText('Analisando checklist...');
-    setTimeout(() => setLoadingText('Interpretando seu checklist...'), 800);
-    setTimeout(() => setLoadingText('Identificando funcionalidades...'), 1600);
-    setTimeout(() => setLoadingText('Organizando testes por categoria...'), 2400);
+    // Discrete loading feedback steps (Etapa 43)
+    setLoadingText('Extraindo conteúdo...');
+    setTimeout(() => setLoadingText('Identificando estrutura...'), 600);
+    setTimeout(() => setLoadingText('Classificando instruções e testes...'), 1200);
+    setTimeout(() => setLoadingText('Organizando cenários...'), 1800);
+    setTimeout(() => setLoadingText('Identificando passos...'), 2400);
+    setTimeout(() => setLoadingText('Identificando validações...'), 3000);
+    setTimeout(() => setLoadingText('Revisando interpretação...'), 3600);
 
     try {
-      const items = await parseChecklistFile(file);
+      const structure = await parseChecklistFile(file);
       setIsAnalyzing(false);
-      setParsedItems(items);
+      setParsedStructure(structure);
     } catch (err: unknown) {
       setIsAnalyzing(false);
       const msg = err instanceof Error ? err.message : 'Não foi possível interpretar este arquivo.';
@@ -66,18 +87,40 @@ export default function NewProjectPage() {
       setErrorMessage('Por favor, informe o nome do projeto.');
       return;
     }
-    // Default starting questions for manual creation
-    const manualDefaultItems: ParsedItem[] = [
-      { id: 'm-1', category: 'Navegação', question: 'O menu principal funciona corretamente?', order: 1 },
-      { id: 'm-2', category: 'Navegação', question: 'O menu mobile abre e fecha sem falhas?', order: 2 },
-      { id: 'm-3', category: 'Formulários', question: 'O formulário de contato envia as mensagens?', order: 3 },
-      { id: 'm-4', category: 'Contato', question: 'O botão do WhatsApp abre a conversa?', order: 4 },
-      { id: 'm-5', category: 'Responsividade', question: 'O site é responsivo em dispositivos móveis?', order: 5 },
-    ];
-    setParsedItems(manualDefaultItems);
+    const manualStructure: ParsedChecklistStructure = {
+      documentTitle: name,
+      sections: [
+        {
+          title: 'Navegação e Conteúdo',
+          scenarios: [
+            {
+              title: 'Funcionamento do menu principal e navegação',
+              description: 'Verificar se os links do menu e páginas carregam corretamente.',
+              confidence: 0.98,
+              preconditions: [],
+              steps: [
+                { text: 'Acesse a página inicial do site.', order: 1 },
+                { text: 'Clique nos itens do menu principal.', order: 2 },
+              ],
+              assertions: [
+                { text: 'O menu principal funciona sem erros.', confidence: 0.99, order: 1 },
+                { text: 'As páginas correspondentes são exibidas corretamente.', confidence: 0.98, order: 2 },
+              ],
+              instructions: [],
+              requiresEvidence: false,
+            },
+          ],
+        },
+      ],
+      ignoredElements: [],
+      needsReview: [],
+    };
+    setParsedStructure(manualStructure);
   };
 
-  const handleConfirmReview = (categories: string[], items: ParsedItem[]) => {
+  const handleConfirmReview = (
+    sections: Array<{ title: string; scenarios: ScenarioDraft[] }>
+  ) => {
     const projId = `proj-${Date.now()}`;
     const tplId = `tpl-${Date.now()}`;
     const runId = `run-${Date.now()}`;
@@ -101,28 +144,51 @@ export default function NewProjectPage() {
       created_at: new Date().toISOString(),
     };
 
-    // Build Category Entities
-    const categoryEntities: ChecklistCategory[] = categories.map((catName, index) => ({
-      id: `cat-${Date.now()}-${index}`,
-      checklist_template_id: tplId,
-      name: catName,
-      order: index + 1,
-    }));
+    const sectionEntities: ChecklistSection[] = [];
+    const scenarioEntities: ChecklistScenario[] = [];
 
-    const catNameToIdMap = new Map(categoryEntities.map((c) => [c.name, c.id]));
+    let secOrder = 1;
+    let scenOrder = 1;
 
-    // Build Item Entities
-    const itemEntities: ChecklistItem[] = items.map((item, index) => ({
-      id: `item-${Date.now()}-${index}`,
-      checklist_template_id: tplId,
-      category_id: catNameToIdMap.get(item.category) || categoryEntities[0].id,
-      category_name: item.category,
-      question: item.question,
-      order: index + 1,
-      created_at: new Date().toISOString(),
-    }));
+    sections.forEach((sec) => {
+      const secId = `sec-${Date.now()}-${secOrder}`;
+      sectionEntities.push({
+        id: secId,
+        checklist_template_id: tplId,
+        title: sec.title,
+        order: secOrder++,
+      });
 
-    // Initial Test Run
+      sec.scenarios.forEach((scen) => {
+        const scenId = `scen-${Date.now()}-${scenOrder}`;
+        scenarioEntities.push({
+          id: scenId,
+          checklist_template_id: tplId,
+          section_id: secId,
+          section_title: sec.title,
+          title: scen.title,
+          description: scen.description,
+          confidence: scen.confidence,
+          order: scenOrder++,
+          steps: scen.steps.map((st, idx) => ({
+            id: `st-${scenId}-${idx}`,
+            scenario_id: scenId,
+            text: st.text,
+            order: idx + 1,
+          })),
+          assertions: scen.assertions.map((as, idx) => ({
+            id: `as-${scenId}-${idx}`,
+            scenario_id: scenId,
+            text: as.text,
+            confidence: as.confidence,
+            order: idx + 1,
+          })),
+          requiresEvidence: scen.requiresEvidence,
+          created_at: new Date().toISOString(),
+        });
+      });
+    });
+
     const newRun: TestRun = {
       id: runId,
       project_id: projId,
@@ -137,8 +203,8 @@ export default function NewProjectPage() {
     const updated = { ...data };
     updated.projects.unshift(newProject);
     updated.templates.unshift(newTemplate);
-    updated.categories.push(...categoryEntities);
-    updated.items.push(...itemEntities);
+    updated.sections.push(...sectionEntities);
+    updated.scenarios.push(...scenarioEntities);
     updated.runs.unshift(newRun);
 
     saveStorageData(updated);
@@ -149,7 +215,7 @@ export default function NewProjectPage() {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Navbar currentRole={data.currentUser.role} userName={data.currentUser.name} />
 
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-8">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-8">
         <button
           onClick={() => router.push('/dashboard')}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600 mb-4 transition-colors"
@@ -158,15 +224,14 @@ export default function NewProjectPage() {
           Voltar ao dashboard
         </button>
 
-        {/* Render Review Screen if file has been analyzed */}
-        {parsedItems ? (
+        {parsedStructure ? (
           <ChecklistReviewScreen
-            initialItems={parsedItems}
+            initialStructure={parsedStructure}
             projectName={name || 'Novo Projeto'}
             websiteUrl={websiteUrl}
             sourceFileName={file?.name}
             onConfirm={handleConfirmReview}
-            onCancel={() => setParsedItems(null)}
+            onCancel={() => setParsedStructure(null)}
           />
         ) : (
           <div className="bg-white rounded-xl border border-slate-200 p-6 sm:p-8 shadow-xs">
@@ -175,11 +240,10 @@ export default function NewProjectPage() {
                 Novo Projeto
               </h1>
               <p className="text-xs text-slate-500 mt-1">
-                Envie o arquivo do seu checklist para transformar em uma auditoria digital interativa.
+                Envie o arquivo do seu checklist para transformar em uma estrutura profissional de QA.
               </p>
             </div>
 
-            {/* Error Message Box */}
             {errorMessage && (
               <div className="mb-6 p-4 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center justify-between">
                 <span>{errorMessage}</span>
@@ -193,7 +257,6 @@ export default function NewProjectPage() {
             )}
 
             <form onSubmit={handleAnalyze} className="space-y-6">
-              {/* Name */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">
                   Nome do Projeto *
@@ -208,7 +271,6 @@ export default function NewProjectPage() {
                 />
               </div>
 
-              {/* Website URL */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">
                   URL do Site (opcional)
@@ -222,7 +284,6 @@ export default function NewProjectPage() {
                 />
               </div>
 
-              {/* Description */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">
                   Descrição / Observações do Projeto (opcional)
@@ -236,7 +297,6 @@ export default function NewProjectPage() {
                 />
               </div>
 
-              {/* File Dropzone */}
               <div>
                 <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">
                   Anexar Arquivo do Checklist
@@ -276,7 +336,6 @@ export default function NewProjectPage() {
                 </div>
               </div>
 
-              {/* Analyze or Manual Buttons */}
               <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <button
                   type="button"

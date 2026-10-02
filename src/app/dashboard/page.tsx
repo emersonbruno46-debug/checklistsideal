@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { ProjectCard } from '@/components/ProjectCard';
 import { getStorageData, saveStorageData } from '@/lib/storage';
-import { Project, TestRun, ChecklistItem, TestAnswer, UserRole } from '@/types/database';
-import { Plus, Search, FolderCheck, AlertTriangle, CheckSquare } from 'lucide-react';
+import { UserRole } from '@/types/database';
+import { Plus, Search, FolderCheck, AlertTriangle } from 'lucide-react';
 
 export default function DashboardPage() {
   const [data, setData] = useState(() => getStorageData());
@@ -39,7 +39,6 @@ export default function DashboardPage() {
     setDeleteConfirmId(null);
   };
 
-  // Filter projects by search
   const filteredProjects = data.projects.filter(
     (p) =>
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -55,14 +54,13 @@ export default function DashboardPage() {
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Top Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
               Seus Projetos
             </h1>
             <p className="text-sm text-slate-600 mt-1">
-              Gerencie checklists digitais, audite funcionalidades e acompanhe correções.
+              Gerencie checklists digitais, crie cenários de testes e acompanhe a qualidade dos seus sistemas.
             </p>
           </div>
 
@@ -75,7 +73,6 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* Search & Stats Bar */}
         {data.projects.length > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
             <div className="relative w-full sm:w-80">
@@ -95,20 +92,17 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Projects Grid or Empty State */}
         {filteredProjects.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredProjects.map((project) => {
-              // Find latest run for project
               const projectRuns = data.runs
                 .filter((r) => r.project_id === project.id)
                 .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
               const latestRun = projectRuns[0];
 
-              // Find template and items count
               const template = data.templates.find((t) => t.project_id === project.id);
-              const itemsCount = template
-                ? data.items.filter((i) => i.checklist_template_id === template.id).length
+              const scenariosCount = template
+                ? data.scenarios.filter((s) => s.checklist_template_id === template.id).length
                 : 0;
 
               return (
@@ -116,8 +110,8 @@ export default function DashboardPage() {
                   key={project.id}
                   project={project}
                   latestRun={latestRun}
-                  itemsCount={itemsCount}
-                  answers={data.answers}
+                  scenariosCount={scenariosCount}
+                  scenarioResults={data.scenarioResults}
                   onDeleteProject={handleDeleteProject}
                 />
               );
@@ -132,7 +126,7 @@ export default function DashboardPage() {
               Nenhum projeto ainda.
             </h2>
             <p className="text-xs text-slate-500 mb-6 leading-relaxed">
-              Crie seu primeiro projeto anexando um arquivo de checklist (PDF, DOCX, TXT ou CSV) para gerar um teste digital interativo.
+              Crie seu primeiro projeto anexando um arquivo de checklist (PDF, DOCX, TXT ou CSV) para transformar em uma estrutura de QA profissional.
             </p>
             <Link
               href="/projects/new"
@@ -145,7 +139,6 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-xl border border-slate-200 p-6 max-w-md w-full shadow-xl">

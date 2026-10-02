@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { RunHistoryList } from '@/components/RunHistoryList';
 import { getStorageData, saveStorageData } from '@/lib/storage';
-import { Project, TestRun, ChecklistTemplate, ChecklistItem, ChecklistCategory } from '@/types/database';
-import { ArrowLeft, ExternalLink, Play, Edit3, Copy, Plus, History, CheckSquare } from 'lucide-react';
+import { Project, TestRun, ChecklistTemplate, ChecklistScenario, ChecklistSection } from '@/types/database';
+import { ArrowLeft, ExternalLink, Edit3, Copy, Plus } from 'lucide-react';
 
 export default function ProjectDetailsPage() {
   const params = useParams();
@@ -37,15 +37,14 @@ export default function ProjectDetailsPage() {
     );
   }
 
-  const items = template
-    ? data.items.filter((i) => i.checklist_template_id === template.id)
+  const scenarios = template
+    ? data.scenarios.filter((s) => s.checklist_template_id === template.id)
     : [];
 
-  const categories = template
-    ? data.categories.filter((c) => c.checklist_template_id === template.id)
+  const sections = template
+    ? data.sections.filter((sec) => sec.checklist_template_id === template.id)
     : [];
 
-  // Create new execution run (empty answers)
   const handleStartNewRun = () => {
     if (!template) return;
 
@@ -67,7 +66,6 @@ export default function ProjectDetailsPage() {
     router.push(`/projects/${projectId}/runs/${runId}`);
   };
 
-  // Duplicate checklist template to another project
   const handleDuplicateChecklist = () => {
     const targetName = prompt('Digite o nome do novo projeto para o qual deseja duplicar este checklist:', `${project.name} (Cópia)`);
     if (!targetName) return;
@@ -95,22 +93,27 @@ export default function ProjectDetailsPage() {
       created_at: new Date().toISOString(),
     };
 
-    const newCategories: ChecklistCategory[] = categories.map((c, idx) => ({
-      id: `cat-dup-${Date.now()}-${idx}`,
+    const newSections: ChecklistSection[] = sections.map((sec, idx) => ({
+      id: `sec-dup-${Date.now()}-${idx}`,
       checklist_template_id: newTplId,
-      name: c.name,
-      order: c.order,
+      title: sec.title,
+      order: sec.order,
     }));
 
-    const catNameMap = new Map(newCategories.map((nc) => [nc.name, nc.id]));
+    const secTitleMap = new Map(newSections.map((ns) => [ns.title, ns.id]));
 
-    const newItems: ChecklistItem[] = items.map((it, idx) => ({
-      id: `item-dup-${Date.now()}-${idx}`,
+    const newScenarios: ChecklistScenario[] = scenarios.map((scen, idx) => ({
+      id: `scen-dup-${Date.now()}-${idx}`,
       checklist_template_id: newTplId,
-      category_id: catNameMap.get(it.category_name || '') || newCategories[0]?.id,
-      category_name: it.category_name,
-      question: it.question,
-      order: it.order,
+      section_id: secTitleMap.get(scen.section_title || '') || newSections[0]?.id,
+      section_title: scen.section_title,
+      title: scen.title,
+      description: scen.description,
+      confidence: scen.confidence,
+      order: scen.order,
+      steps: scen.steps.map((st) => ({ ...st, id: `st-${Date.now()}-${Math.random()}` })),
+      assertions: scen.assertions.map((as) => ({ ...as, id: `as-${Date.now()}-${Math.random()}` })),
+      requiresEvidence: scen.requiresEvidence,
       created_at: new Date().toISOString(),
     }));
 
@@ -128,8 +131,8 @@ export default function ProjectDetailsPage() {
     const updated = { ...data };
     updated.projects.unshift(newProj);
     updated.templates.unshift(newTpl);
-    updated.categories.push(...newCategories);
-    updated.items.push(...newItems);
+    updated.sections.push(...newSections);
+    updated.scenarios.push(...newScenarios);
     updated.runs.unshift(newRun);
 
     saveStorageData(updated);
@@ -149,7 +152,6 @@ export default function ProjectDetailsPage() {
           Voltar aos projetos
         </Link>
 
-        {/* Project Header Box */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5 mb-5">
             <div>
@@ -202,12 +204,12 @@ export default function ProjectDetailsPage() {
               <strong className="text-slate-800">{new Date(project.created_at).toLocaleDateString('pt-BR')}</strong>
             </div>
             <div>
-              <span className="text-slate-400 block font-medium">Total de Testes</span>
-              <strong className="text-slate-800">{items.length} itens</strong>
+              <span className="text-slate-400 block font-medium">Cenários de Teste</span>
+              <strong className="text-slate-800">{scenarios.length} cenários</strong>
             </div>
             <div>
-              <span className="text-slate-400 block font-medium">Categorias</span>
-              <strong className="text-slate-800">{categories.length} ativas</strong>
+              <span className="text-slate-400 block font-medium">Seções</span>
+              <strong className="text-slate-800">{sections.length} ativas</strong>
             </div>
             <div>
               <span className="text-slate-400 block font-medium">Execuções</span>
@@ -216,11 +218,10 @@ export default function ProjectDetailsPage() {
           </div>
         </div>
 
-        {/* History Component */}
         <RunHistoryList
           projectId={project.id}
           runs={runs}
-          answers={data.answers}
+          scenarioResults={data.scenarioResults}
           onNewRun={handleStartNewRun}
         />
       </main>

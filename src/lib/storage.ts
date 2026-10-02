@@ -1,14 +1,29 @@
-import { Project, ChecklistTemplate, ChecklistCategory, ChecklistItem, TestRun, TestAnswer, Attachment, ParsedItem } from '@/types/database';
+import {
+  Project,
+  ChecklistTemplate,
+  ChecklistSection,
+  ChecklistScenario,
+  ScenarioResult,
+  Attachment,
+  ChecklistCategory,
+  ChecklistItem,
+  TestRun,
+  TestAnswer,
+} from '@/types/database';
 
-const LOCAL_STORAGE_KEY = 'ideal_checklists_db_v1';
+const LOCAL_STORAGE_KEY = 'ideal_checklists_db_v2';
 
 interface StorageData {
   projects: Project[];
   templates: ChecklistTemplate[];
+  sections: ChecklistSection[];
+  scenarios: ChecklistScenario[];
+  runs: TestRun[];
+  scenarioResults: Record<string, ScenarioResult>; // key: `${runId}_${scenarioId}`
+  // Legacy fields
   categories: ChecklistCategory[];
   items: ChecklistItem[];
-  runs: TestRun[];
-  answers: Record<string, TestAnswer>; // key: `${runId}_${itemId}`
+  answers: Record<string, TestAnswer>;
   attachments: Attachment[];
   currentUser: {
     name: string;
@@ -17,7 +32,7 @@ interface StorageData {
   };
 }
 
-// Initial seed project: Cuidare
+// Initial seed project: Cuidare with Scenario Architecture
 export const INITIAL_SEED: StorageData = {
   currentUser: {
     name: 'Bruno (Admin)',
@@ -45,28 +60,96 @@ export const INITIAL_SEED: StorageData = {
       created_at: '2026-10-02T10:00:00.000Z',
     },
   ],
-  categories: [
-    { id: 'cat-nav', checklist_template_id: 'tpl-cuidare-01', name: 'Navegação', order: 1 },
-    { id: 'cat-sched', checklist_template_id: 'tpl-cuidare-01', name: 'Agendamento', order: 2 },
-    { id: 'cat-contact', checklist_template_id: 'tpl-cuidare-01', name: 'Contato', order: 3 },
-    { id: 'cat-resp', checklist_template_id: 'tpl-cuidare-01', name: 'Responsividade', order: 4 },
+  sections: [
+    { id: 'sec-nav', checklist_template_id: 'tpl-cuidare-01', title: 'Navegação e Layout', order: 1 },
+    { id: 'sec-sched', checklist_template_id: 'tpl-cuidare-01', title: 'Agendamento e Consultas', order: 2 },
+    { id: 'sec-contact', checklist_template_id: 'tpl-cuidare-01', title: 'Contato e Suporte', order: 3 },
   ],
-  items: [
-    // Navegação
-    { id: 'item-1', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-nav', category_name: 'Navegação', question: 'O menu principal funciona corretamente?', order: 1, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-2', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-nav', category_name: 'Navegação', question: 'O menu mobile abre e fecha sem falhas?', order: 2, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-3', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-nav', category_name: 'Navegação', question: 'Todos os links internos direcionam para as seções corretas?', order: 3, created_at: '2026-10-02T10:00:00.000Z' },
-    // Agendamento
-    { id: 'item-4', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-sched', category_name: 'Agendamento', question: 'O botão "Agendar consulta" abre o fluxo de agendamento?', order: 4, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-5', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-sched', category_name: 'Agendamento', question: 'É possível realizar um agendamento completo?', order: 5, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-6', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-sched', category_name: 'Agendamento', question: 'É possível remarcar uma consulta existente?', order: 6, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-7', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-sched', category_name: 'Agendamento', question: 'É possível cancelar um agendamento?', order: 7, created_at: '2026-10-02T10:00:00.000Z' },
-    // Contato
-    { id: 'item-8', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-contact', category_name: 'Contato', question: 'O botão do WhatsApp abre a conversa corretamente?', order: 8, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-9', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-contact', category_name: 'Contato', question: 'O formulário de contato envia as mensagens e exibe sucesso?', order: 9, created_at: '2026-10-02T10:00:00.000Z' },
-    // Responsividade
-    { id: 'item-10', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-resp', category_name: 'Responsividade', question: 'O site funciona perfeitamente em telas Desktop?', order: 10, created_at: '2026-10-02T10:00:00.000Z' },
-    { id: 'item-11', checklist_template_id: 'tpl-cuidare-01', category_id: 'cat-resp', category_name: 'Responsividade', question: 'O site funciona perfeitamente em dispositivos celulares (Mobile)?', order: 11, created_at: '2026-10-02T10:00:00.000Z' },
+  scenarios: [
+    {
+      id: 'scen-1',
+      checklist_template_id: 'tpl-cuidare-01',
+      section_id: 'sec-nav',
+      section_title: 'Navegação e Layout',
+      title: 'Navegação principal e menu mobile',
+      description: 'Verificar o comportamento do menu em resoluções desktop e mobile.',
+      confidence: 0.98,
+      order: 1,
+      steps: [
+        { id: 'st-1', scenario_id: 'scen-1', text: 'Acesse o site principal.', order: 1 },
+        { id: 'st-2', scenario_id: 'scen-1', text: 'Redimensione para a versão mobile (<360px).', order: 2 },
+        { id: 'st-3', scenario_id: 'scen-1', text: 'Clique no ícone de menu hambúrguer.', order: 3 },
+      ],
+      assertions: [
+        { id: 'as-1', scenario_id: 'scen-1', text: 'O menu principal carrega sem erros de layout.', order: 1, confidence: 0.99 },
+        { id: 'as-2', scenario_id: 'scen-1', text: 'O menu mobile abre e fecha suavemente.', order: 2, confidence: 0.97 },
+        { id: 'as-3', scenario_id: 'scen-1', text: 'Os elementos do menu não se sobrepõem em telas menores que 360px.', order: 3, confidence: 0.95 },
+      ],
+      created_at: '2026-10-02T10:00:00.000Z',
+    },
+    {
+      id: 'scen-2',
+      checklist_template_id: 'tpl-cuidare-01',
+      section_id: 'sec-sched',
+      section_title: 'Agendamento e Consultas',
+      title: 'Fluxo completo de agendamento de consulta',
+      description: 'Testar criação, confirmação e reserva de horário.',
+      confidence: 0.99,
+      order: 2,
+      steps: [
+        { id: 'st-4', scenario_id: 'scen-2', text: 'Clique no botão "Agendar Consulta".', order: 1 },
+        { id: 'st-5', scenario_id: 'scen-2', text: 'Selecione a especialidade e o horário desejado.', order: 2 },
+        { id: 'st-6', scenario_id: 'scen-2', text: 'Preencha os dados de contato e confirme.', order: 3 },
+      ],
+      assertions: [
+        { id: 'as-4', scenario_id: 'scen-2', text: 'O formulário de agendamento abre corretamente.', order: 1, confidence: 0.99 },
+        { id: 'as-5', scenario_id: 'scen-2', text: 'O horário selecionado é reservado com sucesso.', order: 2, confidence: 0.98 },
+        { id: 'as-6', scenario_id: 'scen-2', text: 'Mensagem de confirmação é exibida ao final do processo.', order: 3, confidence: 0.96 },
+      ],
+      created_at: '2026-10-02T10:00:00.000Z',
+    },
+    {
+      id: 'scen-3',
+      checklist_template_id: 'tpl-cuidare-01',
+      section_id: 'sec-sched',
+      section_title: 'Agendamento e Consultas',
+      title: 'Cancelamento de agendamento',
+      description: 'Testar o cancelamento de uma consulta previamente agendada.',
+      confidence: 0.97,
+      order: 3,
+      steps: [
+        { id: 'st-7', scenario_id: 'scen-3', text: 'Acesse a área de consultas agendadas.', order: 1 },
+        { id: 'st-8', scenario_id: 'scen-3', text: 'Selecione a consulta e clique em "Cancelar Agendamento".', order: 2 },
+        { id: 'st-9', scenario_id: 'scen-3', text: 'Confirme o cancelamento no modal.', order: 3 },
+        { id: 'st-10', scenario_id: 'scen-3', text: 'Atualize a página.', order: 4 },
+      ],
+      assertions: [
+        { id: 'as-7', scenario_id: 'scen-3', text: 'O agendamento muda para o status Cancelado.', order: 1, confidence: 0.98 },
+        { id: 'as-8', scenario_id: 'scen-3', text: 'A consulta permanece cancelada após atualizar a página.', order: 2, confidence: 0.97 },
+        { id: 'as-9', scenario_id: 'scen-3', text: 'O horário cancelado fica novamente disponível na agenda.', order: 3, confidence: 0.95 },
+      ],
+      created_at: '2026-10-02T10:00:00.000Z',
+    },
+    {
+      id: 'scen-4',
+      checklist_template_id: 'tpl-cuidare-01',
+      section_id: 'sec-contact',
+      section_title: 'Contato e Suporte',
+      title: 'Integração com botão do WhatsApp e Formulário de Contato',
+      description: 'Validar canais de atendimento direto.',
+      confidence: 0.96,
+      order: 4,
+      steps: [
+        { id: 'st-11', scenario_id: 'scen-4', text: 'Clique no botão flutuante do WhatsApp.', order: 1 },
+        { id: 'st-12', scenario_id: 'scen-4', text: 'Preencha o formulário de contato do rodapé e envie.', order: 2 },
+      ],
+      assertions: [
+        { id: 'as-10', scenario_id: 'scen-4', text: 'O botão do WhatsApp abre o chat oficial com mensagem pré-definida.', order: 1, confidence: 0.99 },
+        { id: 'as-11', scenario_id: 'scen-4', text: 'O formulário de contato valida os campos obrigatórios.', order: 2, confidence: 0.97 },
+        { id: 'as-12', scenario_id: 'scen-4', text: 'Mensagem de sucesso é exibida após o envio do formulário.', order: 3, confidence: 0.98 },
+      ],
+      created_at: '2026-10-02T10:00:00.000Z',
+    },
   ],
   runs: [
     {
@@ -80,35 +163,57 @@ export const INITIAL_SEED: StorageData = {
       created_at: '2026-10-02T10:15:00.000Z',
     },
   ],
-  answers: {
-    'run-cuidare-01_item-1': {
-      id: 'ans-1',
+  scenarioResults: {
+    'run-cuidare-01_scen-1': {
+      id: 'res-1',
       test_run_id: 'run-cuidare-01',
-      checklist_item_id: 'item-1',
-      result: 'yes',
+      scenario_id: 'scen-1',
+      result: 'caveat',
+      note: 'O menu funciona, porém existe pequena sobreposição em telas abaixo de 360px.',
+      assertion_results: {
+        'as-1': 'passed',
+        'as-2': 'passed',
+        'as-3': 'caveat',
+      },
       created_at: '2026-10-02T10:16:00.000Z',
       updated_at: '2026-10-02T10:16:00.000Z',
     },
-    'run-cuidare-01_item-2': {
-      id: 'ans-2',
+    'run-cuidare-01_scen-2': {
+      id: 'res-2',
       test_run_id: 'run-cuidare-01',
-      checklist_item_id: 'item-2',
-      result: 'caveat',
-      note: 'Funciona, porém existe pequena sobreposição do menu em telas abaixo de 360px.',
+      scenario_id: 'scen-2',
+      result: 'yes',
+      assertion_results: {
+        'as-4': 'passed',
+        'as-5': 'passed',
+        'as-6': 'passed',
+      },
       created_at: '2026-10-02T10:17:00.000Z',
       updated_at: '2026-10-02T10:17:00.000Z',
     },
-    'run-cuidare-01_item-7': {
-      id: 'ans-7',
+    'run-cuidare-01_scen-3': {
+      id: 'res-3',
       test_run_id: 'run-cuidare-01',
-      checklist_item_id: 'item-7',
+      scenario_id: 'scen-3',
       result: 'no',
-      note: 'Após confirmar o cancelamento, a tela fica carregando indefinidamente.',
+      note: 'Após confirmar o cancelamento, a tela fica carregando indefinidamente e o status não é atualizado.',
       severity: 'high',
+      assertion_results: {
+        'as-7': 'failed',
+        'as-8': 'failed',
+        'as-9': 'passed',
+      },
       created_at: '2026-10-02T10:18:00.000Z',
       updated_at: '2026-10-02T10:18:00.000Z',
     },
   },
+  // Legacy structures initialized for compatibility
+  categories: [
+    { id: 'cat-nav', checklist_template_id: 'tpl-cuidare-01', name: 'Navegação', order: 1 },
+    { id: 'cat-sched', checklist_template_id: 'tpl-cuidare-01', name: 'Agendamento', order: 2 },
+  ],
+  items: [],
+  answers: {},
   attachments: [],
 };
 
